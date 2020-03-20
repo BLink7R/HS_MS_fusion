@@ -100,6 +100,6 @@ while ITE_TIME<10
 %     Sigma = Sigma.*0.5;
     disp('X ok');
     figure(4);imshow(1.5*Xk(:,:,2:4));title('X');
-    [snr1,snr2]=CheckResult(HS,MS,X,Rk,bk);
+    [snr1,snr2]=CheckResult(HS,MS,Xk,Rk,bk);
     fprintf('snr in HS is %12.5f,\nsnr in MS is %12.7f\n',snr1,snr2);
 end
