@@ -7,7 +7,7 @@ function [ X ] = SylvesterFusion( MS,HS,b,R,subspace,Sigma,mu,Lambda_m,Lambda_h 
 %   R: spectral degrade matrix
 %   subspace: the subspace X lay in
 %   Sigma: a prior convariance of X
-%   Mu: a prior expect of X
+%   mu: a prior expect of X
 %   Lambda_m: the diagnol of noice covariance in MS
 %   Lambda_h: the diagnol of noice covariance in HS
 %output
@@ -21,8 +21,6 @@ HSmat = img2mat(HS);
 scale = MSrow/HSrow; % downsample factor
 
 %% calculate a prior expect of X in subspace
-% mu = imresize(HS,scale,'bicubic');
-% mu = ima_interp_spline(HS,scale);
 % figure(5);imshow(mu(:,:,2:4));title('mu');
 invspace = pinv(subspace);
 mu = invspace*img2mat(mu);

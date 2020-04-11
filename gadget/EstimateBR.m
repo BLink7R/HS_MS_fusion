@@ -58,7 +58,7 @@ for y=rB+1:scale:MSrow+rB
         sum2  = sum2+block'*img2mat(maskHS(y-rB,x-rB,:));
     end
 end
-b = sum1\sum2;
+b = real(sum1\sum2);
 
 %% normalize
 sumB = sum(b(:));
