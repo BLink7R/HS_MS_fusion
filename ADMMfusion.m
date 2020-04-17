@@ -1,105 +1,80 @@
-%% load data
-addpath('./gadget');
-load('data.mat')
-HS = MS;
-MS = PAN;
+function [ X ] = ADMMFusion( MS,HS,b,R,subspace,Xest,parameter )
+%SPARSEFUSION
+%input
+%   MS(data cube): MS image
+%   HS(data cube): HS image
+%   b: bluring kernal
+%   R: spectral degrade matrix
+%   subspace: the subspace X lay in
+%   Xest: a rough estimation of X
+%   parameter: cell array of Lambda_m,Lambda_h,Lambda,Mu
+%output
+%   X(data cube): fused image
 
-[HSrow,HScol,HSband]=size(HS);
-[MSrow,MScol,MSband]=size(MS);
-scale = MSrow/HSrow;
+%%
+[MSrow,MScol,MSband] = size(MS);
+[HSrow,HScol,HSband] = size(HS);
+MSmat = img2mat(MS);
+HSmat = img2mat(HS);
+scale = MSrow/HSrow; % downsample factor
 
-matHS = img2mat(HS);
-matMS = img2mat(MS);
+[Lambda_m,Lambda_h,Lambda,Mu] = deal(parameter{:});
+invL_h = diag(1./Lambda_h);
+invL_m = diag(1./Lambda_m);
 
-maskHS = UpsampleIMG(HS,scale);
-figure(1);imshow(1.5*HS(:,:,2:4));title('HS');
-figure(2);imshow(1.5*MS);title('MS');
+%% calculate a prior mean of X in subspace
+subspace_dim = size(subspace,2);
+invspace = pinv(subspace);
+Uest = invspace*img2mat(Xest);
+Uest = mat2img(Uest,MSrow);
 
-%% parameter
-rB = 8;
-sizeB = (2*rB+1)^2;
-subspace_dim = 4;
-
-Lambda_b = 1e6; % regularization parameter of B
-Lambda_b2 = 1e1;
-Lambda_r = 1e3; % regularization parameter of R
-
-
-Lambda_m = 1*ones(1,MSband); % covariance of noice in MS
-Lambda_h = 1*ones(1,HSband); % covariance of noice in HS
-Sigma = 1e3*ones(1,subspace_dim);
-
-%% band map
-band_map=cell(1,MSband);
-HS_bandID = [1 2 3 4]';
-[~,band_map{1}] = intersect(HS_bandID, 1:4);
-
-%% diff matrix
-% for each row of R
-Dr = cell(1,MSband);
-for i=1:MSband
-    bands_list = band_map{i};
-    bands_l    = length(bands_list);
-    contiguous = (diff(HS_bandID(bands_list))==1);
-    Dr{i} = sparse(bands_l,bands_l-1);
-    if bands_l>1, Dr{i} = spdiags([1 -1].*contiguous,[0 -1],Dr{i}); end
-    Dr{i} = Lambda_r*Dr{i}*Dr{i}';
-end
-
-% for b
-Dh = spdiags([1 -1].*ones(sizeB,1),[0 2*rB+1],sparse(sizeB-(2*rB+1),sizeB));
-Dv = kron(eye(2*rB+1),...
-    spdiags([1 -1].*ones(2*rB,1),[0 1],sparse(2*rB,2*rB+1)));
-Dl = 2*eye(sizeB)-ones(sizeB);
-Db = Lambda_b*(Dh'*Dh+Dv'*Dv+Lambda_b2*Dl);
-%% subspace identification
-% [V,~] = svd(matHS);
-% subspace = V(:,1:subspace_dim);
-[subspace, ~, ~, ~]=idHSsub(HS,'PCA',1,subspace_dim);
-% subspace = eye(subspace_dim);
-
-%% iteration initial value
-Xk = ima_interp_spline(HS,scale);
-X0 = Xk;
-figure(3);imshow(1.5*Xk(:,:,[2 3 4]));title('X0');
-% bk = fspecial('average',[2*rB+1 2*rB+1]);
-% Rk = fspecial('average',[MSband HSband]);
+%% converse kernal b to matrix B
+B = kernal2mat(b,[MSrow MScol]);
+FB = fft2(B); % eigen values of B
+IB = 1./(2+FB.*conj(FB)); % eigen values of (B*B^T+2I)^-1
 
 %% iteration
-ITE_TIME = 0;
-while ITE_TIME<10
-    ITE_TIME = ITE_TIME+1;
-    matXk = img2mat(Xk);
-    % solve R
-    Rk = zeros(MSband,HSband);
-    for i=1:MSband
-        bands_list = band_map{i};
-        bands = matXk(bands_list,:);
-        Rk(i,bands_list) = matMS(i,:)*bands'/(bands*bands'+Dr{i});
+fprintf('start ADMM step\n');
+V1 = BlurIMG(Uest,b);
+V2 = img2mat(Uest);
+V3 = V2;
+G1 = zeros(size(V1));
+G2 = zeros(size(V2));
+G3 = G2;
+for ADMM_ite=1:30
+    fprintf('ADMM %d iteration\n',ADMM_ite);
+    fprintf('Start SALSA sub-iteration\n');
+    for SALSA_ite=1:5
+        fprintf('SALSA %d iteration\n',SALSA_ite);
+        Uopt = ifft2(fft2(V1+G1).*conj(FB))+mat2img(V2+G2+V3+G3,MSrow);
+        Uopt = real(ifft2(fft2(Uopt).*IB));
+        Umat = img2mat(Uopt);
+        % V1
+        v1 = BlurIMG(Uopt,b)-G1;
+        V1 = v1;
+        V1mat = (subspace'*invL_h*subspace+Mu*eye(HSband))...
+            \(subspace'*invL_h*HSmat+Mu*img2mat(DownsampleIMG(v1,scale)));
+        V1(1:scale:MSrow,1:scale:MScol,:)=mat2img(V1mat,HSrow);
+        %     figure(6);imshow(V1(:,:,2:4));title('V1');
+        % V2
+        v2 = Umat-G2;
+        HR = R*subspace;
+        V2 = (HR'*invL_m*HR+Mu*eye(subspace_dim))\(HR'*invL_m*MSmat+Mu*v2);
+        % V3
+        v3 = Umat-G3;
+        V3 = (Lambda+Mu)\(Lambda*img2mat(Uest)+Mu*v3);
+        % G
+        G1 = -v1+V1;
+        G2 = -v2+V2;
+        G3 = -v3+V3;
     end
-    disp('r ok');
-    % solve b (kernal of B)
-    sum1 = Db;
-    sum2 = -Lambda_b2*Lambda_b*ones(sizeB,1);
-    padX = padarray(Xk,[rB rB],'circular');
-    for y=1:scale:MSrow
-        for x=1:scale:MScol
-            block = img2mat(padX(y:y+2*rB,x:x+2*rB,:)); % pixels affected by bluring kernal
-            sum1  = sum1+block'*block;
-            sum2  = sum2+block'*img2mat(maskHS(y,x,:));
-        end
-    end
-    % show bluring kernal
-    bk = rot90(reshape(sum1\sum2,2*rB+1,2*rB+1));
-    disp('b ok');
-    figure(5);imagesc(bk);axis image;axis off;
-    set(gca,'FontSize',15);
-    colorbar;title('Estimated Spatial Blurring');
-    % solve X
-    Xk = SylvesterFusion(MS,HS,bk,Rk,subspace,Sigma,Xk,Lambda_m,Lambda_h);
-%     Sigma = Sigma.*0.5;
-    disp('X ok');
-    figure(4);imshow(1.5*Xk(:,:,2:4));title('X');
-    [snr1,snr2]=CheckResult(HS,MS,Xk,Rk,bk);
-    fprintf('snr in HS is %12.5f,\nsnr in MS is %12.7f\n',snr1,snr2);
+    % print result
+    X = real(subspace*Umat);
+    X = mat2img(X,MSrow);
+    figure(5);imshow(X(:,:,2:4));title('X');
+    Uest = Uopt;
 end
+fprintf('ADMM ok\n');
+%%
+X = real(subspace*Umat);
+X = mat2img(X,MSrow);

@@ -1,4 +1,4 @@
-function [ X ] = SylvesterFusion( MS,HS,b,R,subspace,Sigma,mu,Lambda_m,Lambda_h )
+function [ X ] = SylvesterFusion( MS,HS,b,R,subspace,Sigma,Xest,Lambda_m,Lambda_h )
 %SYLVESTERFUSION fuse image
 %input
 %   MS(data cube): MS image
@@ -7,7 +7,7 @@ function [ X ] = SylvesterFusion( MS,HS,b,R,subspace,Sigma,mu,Lambda_m,Lambda_h 
 %   R: spectral degrade matrix
 %   subspace: the subspace X lay in
 %   Sigma: a prior convariance of X
-%   mu: a prior expect of X
+%   Xest: a prior mean of X
 %   Lambda_m: the diagnol of noice covariance in MS
 %   Lambda_h: the diagnol of noice covariance in HS
 %output
@@ -23,7 +23,7 @@ scale = MSrow/HSrow; % downsample factor
 %% calculate a prior expect of X in subspace
 % figure(5);imshow(mu(:,:,2:4));title('mu');
 invspace = pinv(subspace);
-mu = invspace*img2mat(mu);
+Xest = invspace*img2mat(Xest);
 
 %% converse kernal b to matrix B
 B = kernal2mat(b,[MSrow MScol]);
@@ -40,17 +40,18 @@ invL_h = diag(1./Lambda_h);
 invSig = diag(1./Sigma);
 
 maskHS = UpsampleIMG(HS,scale);
-HsBS = img2mat(ifft2(fft2(maskHS).*FB));
+HsBSF = img2mat(fft2(maskHS).*conj(FB));
 
 HLH = subspace'*invL_h*subspace;
 RH = R*subspace;
 C1 = HLH\(RH'*invL_m*RH+invSig);
 [Q,Lambda] = eig(C1);
-C3 = (HLH*Q)\(subspace'*invL_h*HsBS + RH'*invL_m*MSmat + invSig*mu);
+C3 = (HLH*Q)\(RH'*invL_m*MSmat + invSig*Xest);
 C3 = img2mat(fft2(mat2img(C3,MSrow)));
+C3 = C3 + (HLH*Q)\(subspace'*invL_h*HsBSF);
 
 U = zeros(size(subspace,2),MSrow*MScol);
-for i = 1:size(subspace,2) % for each row
+for i = 1:size(subspace,2) % for each band
     row = C3(i,:)/Lambda(i,i);
     mid = spdiags(1./(Lambda(i,i)*ratio+sumD),0,sparse(HSrow*HScol,HSrow*HScol));
     U(i,:) = row-row*Dbar*mid*Dbar';
@@ -59,6 +60,4 @@ end
 %%
 X = subspace*Q*U;
 X = real(ifft2(mat2img(X,MSrow)));
-
-end
 
